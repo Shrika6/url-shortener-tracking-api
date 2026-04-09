@@ -1,0 +1,10 @@
+.git
+.gitignore
+README.md
+.env
+bin
+coverage.out
+go.mod
+go.sum
+main.go
+.DS_Store

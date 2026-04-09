@@ -1,0 +1,11 @@
+.env
+bin/
+coverage.out
+.DS_Store
+.env.example
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+.venv/
