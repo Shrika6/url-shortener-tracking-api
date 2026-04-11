@@ -135,7 +135,7 @@ func TestShortenURL_InvalidURL(t *testing.T) {
 		100,
 	)
 
-	_, err := svc.ShortenURL(context.Background(), "not-a-valid-url")
+	_, err := svc.ShortenURL(context.Background(), "not-a-valid-url", "")
 	require.Error(t, err)
 	require.True(t, errors.Is(err, ErrInvalidURL))
 }
@@ -163,10 +163,80 @@ func TestShortenURL_ReturnsExistingCodeForDuplicateURL(t *testing.T) {
 		100,
 	)
 
-	resp, err := svc.ShortenURL(context.Background(), "https://example.com")
+	resp, err := svc.ShortenURL(context.Background(), "https://example.com", "")
 	require.NoError(t, err)
 	require.Equal(t, "abc123", resp.ShortCode)
 	require.Equal(t, "http://localhost:8080/abc123", resp.ShortURL)
+}
+
+func TestShortenURL_CustomCodeValidation(t *testing.T) {
+	svc := NewShortenerService(
+		&repoMock{},
+		&cacheMock{},
+		zap.NewNop(),
+		"http://localhost:8080",
+		time.Hour,
+		6,
+		time.Second,
+		100,
+	)
+
+	_, err := svc.ShortenURL(context.Background(), "https://example.com", "bad code")
+	require.Error(t, err)
+	require.True(t, errors.Is(err, ErrInvalidCustomCode))
+
+	_, err = svc.ShortenURL(context.Background(), "https://example.com", "health")
+	require.Error(t, err)
+	require.True(t, errors.Is(err, ErrReservedShortCode))
+}
+
+func TestShortenURL_CustomCodeConflict(t *testing.T) {
+	svc := NewShortenerService(
+		&repoMock{},
+		&cacheMock{
+			getURLFn: func(_ context.Context, shortCode string) (*models.CachedURL, error) {
+				require.Equal(t, "my-link", shortCode)
+				return &models.CachedURL{ID: uuid.New(), OriginalURL: "https://already.com"}, nil
+			},
+		},
+		zap.NewNop(),
+		"http://localhost:8080",
+		time.Hour,
+		6,
+		time.Second,
+		100,
+	)
+
+	_, err := svc.ShortenURL(context.Background(), "https://example.com", "my-link")
+	require.Error(t, err)
+	require.True(t, errors.Is(err, ErrCustomCodeConflict))
+}
+
+func TestShortenURL_CustomCodeConflictFromDB(t *testing.T) {
+	svc := NewShortenerService(
+		&repoMock{
+			getByCodeFn: func(_ context.Context, shortCode string) (*models.URL, error) {
+				require.Equal(t, "my-link", shortCode)
+				return &models.URL{
+					ID:          uuid.New(),
+					OriginalURL: "https://existing.com",
+					ShortCode:   "my-link",
+					CreatedAt:   time.Now().UTC(),
+				}, nil
+			},
+		},
+		&cacheMock{},
+		zap.NewNop(),
+		"http://localhost:8080",
+		time.Hour,
+		6,
+		time.Second,
+		100,
+	)
+
+	_, err := svc.ShortenURL(context.Background(), "https://example.com", "my-link")
+	require.Error(t, err)
+	require.True(t, errors.Is(err, ErrCustomCodeConflict))
 }
 
 func TestGetStats_IncludesPendingClicks(t *testing.T) {

@@ -89,6 +89,13 @@ curl -X POST http://localhost:8080/shorten \
   -d '{"url":"https://example.com"}'
 ```
 
+With custom code:
+```bash
+curl -X POST http://localhost:8080/shorten \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://example.com","custom_code":"my-link"}'
+```
+
 Example response:
 ```json
 {

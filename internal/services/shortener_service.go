@@ -16,7 +16,7 @@ import (
 )
 
 type URLService interface {
-	ShortenURL(ctx context.Context, rawURL string) (*models.ShortenResponse, error)
+	ShortenURL(ctx context.Context, rawURL, customCode string) (*models.ShortenResponse, error)
 	ResolveAndTrack(ctx context.Context, shortCode string) (string, error)
 	GetStats(ctx context.Context, shortCode string) (*models.StatsResponse, error)
 	RunClickSync(ctx context.Context)
@@ -56,10 +56,50 @@ func NewShortenerService(
 	}
 }
 
-func (s *ShortenerService) ShortenURL(ctx context.Context, rawURL string) (*models.ShortenResponse, error) {
+func (s *ShortenerService) ShortenURL(ctx context.Context, rawURL, customCode string) (*models.ShortenResponse, error) {
 	rawURL = strings.TrimSpace(rawURL)
 	if err := utils.ValidateURL(rawURL); err != nil {
 		return nil, ErrInvalidURL
+	}
+	customCode = strings.TrimSpace(customCode)
+
+	if customCode != "" {
+		if utils.IsReservedShortCode(customCode) {
+			return nil, ErrReservedShortCode
+		}
+		if err := utils.ValidateCustomCode(customCode); err != nil {
+			return nil, ErrInvalidCustomCode
+		}
+		if err := s.ensureShortCodeAvailable(ctx, customCode); err != nil {
+			if errors.Is(err, ErrCustomCodeConflict) {
+				return nil, ErrCustomCodeConflict
+			}
+			return nil, err
+		}
+
+		item := &models.URL{
+			ID:          uuid.New(),
+			OriginalURL: rawURL,
+			ShortCode:   customCode,
+		}
+
+		err := s.repo.CreateURL(ctx, item)
+		switch {
+		case err == nil:
+			s.cacheURL(ctx, *item)
+			return s.buildShortenResponse(customCode), nil
+		case errors.Is(err, repositories.ErrShortCodeConflict):
+			return nil, ErrCustomCodeConflict
+		case errors.Is(err, repositories.ErrOriginalURLConflict):
+			again, againErr := s.repo.GetByOriginalURL(ctx, rawURL)
+			if againErr != nil {
+				return nil, fmt.Errorf("lookup existing original url: %w", againErr)
+			}
+			s.cacheURL(ctx, *again)
+			return s.buildShortenResponse(again.ShortCode), nil
+		default:
+			return nil, fmt.Errorf("create url with custom code: %w", err)
+		}
 	}
 
 	existing, err := s.repo.GetByOriginalURL(ctx, rawURL)
@@ -267,6 +307,26 @@ func (s *ShortenerService) cacheURL(ctx context.Context, item models.URL) {
 	if err != nil {
 		s.logger.Warn("cache set url failed", zap.Error(err), zap.String("short_code", item.ShortCode))
 	}
+}
+
+func (s *ShortenerService) ensureShortCodeAvailable(ctx context.Context, shortCode string) error {
+	cached, err := s.cache.GetURL(ctx, shortCode)
+	if err != nil {
+		s.logger.Warn("cache get url failed while checking custom code", zap.Error(err), zap.String("short_code", shortCode))
+	}
+	if cached != nil {
+		return ErrCustomCodeConflict
+	}
+
+	_, err = s.repo.GetByCode(ctx, shortCode)
+	if err == nil {
+		return ErrCustomCodeConflict
+	}
+	if err != nil && !errors.Is(err, repositories.ErrURLNotFound) {
+		return fmt.Errorf("check custom code uniqueness: %w", err)
+	}
+
+	return nil
 }
 
 func (s *ShortenerService) buildShortenResponse(shortCode string) *models.ShortenResponse {

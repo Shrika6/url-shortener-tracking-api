@@ -53,11 +53,17 @@ func (h *Handler) Shorten(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.service.ShortenURL(r.Context(), req.URL)
+	resp, err := h.service.ShortenURL(r.Context(), req.URL, req.CustomCode)
 	if err != nil {
 		switch {
 		case errors.Is(err, services.ErrInvalidURL):
 			writeError(w, http.StatusBadRequest, "invalid url")
+		case errors.Is(err, services.ErrInvalidCustomCode):
+			writeError(w, http.StatusBadRequest, "invalid custom_code")
+		case errors.Is(err, services.ErrReservedShortCode):
+			writeError(w, http.StatusBadRequest, "custom_code is reserved")
+		case errors.Is(err, services.ErrCustomCodeConflict):
+			writeError(w, http.StatusConflict, "custom_code already exists")
 		default:
 			h.logger.Error("failed to shorten url", zap.Error(err))
 			writeError(w, http.StatusInternalServerError, "internal server error")
