@@ -37,7 +37,7 @@ url-shortener-tracking-api/
 - Duplicate URL dedupe support (same URL returns existing short code)
 - Redis cache for `short_code -> original_url`
 - Redis-backed click queue + periodic write-behind flush to Postgres
-- Redis fixed-window rate limiting middleware
+- Redis rate limiting middleware (`100 req/min/IP` by default) on `POST /shorten` and `GET /{short_code}`
 - Graceful shutdown with final click flush
 
 ## Database Schema

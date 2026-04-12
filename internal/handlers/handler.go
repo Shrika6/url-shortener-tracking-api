@@ -31,12 +31,11 @@ func (h *Handler) Router(rateLimiter *middleware.RateLimiter) http.Handler {
 	r.Use(chimiddleware.RealIP)
 	r.Use(chimiddleware.Recoverer)
 	r.Use(middleware.Logging(h.logger))
-	r.Use(rateLimiter.Handler)
 
 	r.Get("/health", h.Health)
-	r.Post("/shorten", h.Shorten)
 	r.Get("/stats/{short_code}", h.Stats)
-	r.Get("/{short_code}", h.Redirect)
+	r.With(rateLimiter.Handler).Post("/shorten", h.Shorten)
+	r.With(rateLimiter.Handler).Get("/{short_code}", h.Redirect)
 
 	return r
 }

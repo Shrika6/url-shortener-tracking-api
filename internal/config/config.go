@@ -36,7 +36,7 @@ func Load() (*Config, error) {
 		BaseURL:            strings.TrimRight(getEnv("BASE_URL", "http://localhost:8080"), "/"),
 		CacheTTL:           getDurationEnv("CACHE_TTL", 24*time.Hour),
 		CodeLength:         getIntEnv("CODE_LENGTH", 6),
-		RateLimitRequests:  getInt64Env("RATE_LIMIT_REQUESTS", 120),
+		RateLimitRequests:  getInt64Env("RATE_LIMIT_REQUESTS", 100),
 		RateLimitWindow:    getDurationEnv("RATE_LIMIT_WINDOW", time.Minute),
 		ClickFlushInterval: getDurationEnv("CLICK_FLUSH_INTERVAL", 5*time.Second),
 		ClickFlushBatchSize: getInt64Env("CLICK_FLUSH_BATCH_SIZE", 500),

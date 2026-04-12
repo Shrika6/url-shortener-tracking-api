@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -32,12 +31,7 @@ func NewRateLimiter(redis *redis.Client, limit int64, window time.Duration, logg
 func (rl *RateLimiter) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ip := extractClientIP(r)
-		windowSeconds := int64(rl.window.Seconds())
-		if windowSeconds <= 0 {
-			windowSeconds = 60
-		}
-		windowID := time.Now().UTC().Unix() / windowSeconds
-		key := "shortener:rate_limit:" + ip + ":" + strconv.FormatInt(windowID, 10)
+		key := "rate_limit:" + ip
 
 		count, err := rl.redis.Incr(r.Context(), key).Result()
 		if err != nil {
