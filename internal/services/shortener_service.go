@@ -16,7 +16,7 @@ import (
 )
 
 type URLService interface {
-	ShortenURL(ctx context.Context, rawURL, customCode string) (*models.ShortenResponse, error)
+	ShortenURL(ctx context.Context, rawURL, customCode string, expiresInSeconds *int64) (*models.ShortenResponse, error)
 	ResolveAndTrack(ctx context.Context, shortCode string) (string, error)
 	GetStats(ctx context.Context, shortCode string) (*models.StatsResponse, error)
 	RunClickSync(ctx context.Context)
@@ -56,10 +56,14 @@ func NewShortenerService(
 	}
 }
 
-func (s *ShortenerService) ShortenURL(ctx context.Context, rawURL, customCode string) (*models.ShortenResponse, error) {
+func (s *ShortenerService) ShortenURL(ctx context.Context, rawURL, customCode string, expiresInSeconds *int64) (*models.ShortenResponse, error) {
 	rawURL = strings.TrimSpace(rawURL)
 	if err := utils.ValidateURL(rawURL); err != nil {
 		return nil, ErrInvalidURL
+	}
+	expiresAt, err := s.calculateExpiresAt(expiresInSeconds)
+	if err != nil {
+		return nil, ErrInvalidExpiry
 	}
 	customCode = strings.TrimSpace(customCode)
 
@@ -81,9 +85,10 @@ func (s *ShortenerService) ShortenURL(ctx context.Context, rawURL, customCode st
 			ID:          uuid.New(),
 			OriginalURL: rawURL,
 			ShortCode:   customCode,
+			ExpiresAt:   expiresAt,
 		}
 
-		err := s.repo.CreateURL(ctx, item)
+		err = s.repo.CreateURL(ctx, item)
 		switch {
 		case err == nil:
 			s.cacheURL(ctx, *item)
@@ -122,6 +127,7 @@ func (s *ShortenerService) ShortenURL(ctx context.Context, rawURL, customCode st
 			ID:          uuid.New(),
 			OriginalURL: rawURL,
 			ShortCode:   code,
+			ExpiresAt:   expiresAt,
 		}
 
 		err = s.repo.CreateURL(ctx, item)
@@ -157,6 +163,9 @@ func (s *ShortenerService) ResolveAndTrack(ctx context.Context, shortCode string
 	item, err := s.getURLByCode(ctx, shortCode)
 	if err != nil {
 		return "", err
+	}
+	if s.isExpired(item.ExpiresAt) {
+		return "", ErrShortCodeExpired
 	}
 
 	now := time.Now().UTC()
@@ -280,10 +289,14 @@ func (s *ShortenerService) getURLByCode(ctx context.Context, shortCode string) (
 		s.logger.Warn("cache get url failed", zap.Error(err), zap.String("short_code", shortCode))
 	}
 	if cached != nil {
+		if s.isExpired(cached.ExpiresAt) {
+			return nil, ErrShortCodeExpired
+		}
 		return &models.URL{
 			ID:          cached.ID,
 			OriginalURL: cached.OriginalURL,
 			ShortCode:   shortCode,
+			ExpiresAt:   cached.ExpiresAt,
 		}, nil
 	}
 
@@ -300,10 +313,25 @@ func (s *ShortenerService) getURLByCode(ctx context.Context, shortCode string) (
 }
 
 func (s *ShortenerService) cacheURL(ctx context.Context, item models.URL) {
+	ttl := s.cacheTTL
+	if item.ExpiresAt != nil {
+		remaining := time.Until(item.ExpiresAt.UTC())
+		if remaining <= 0 {
+			return
+		}
+		if ttl <= 0 || remaining < ttl {
+			ttl = remaining
+		}
+	}
+	if ttl <= 0 {
+		return
+	}
+
 	err := s.cache.SetURL(ctx, item.ShortCode, models.CachedURL{
 		ID:          item.ID,
 		OriginalURL: item.OriginalURL,
-	}, s.cacheTTL)
+		ExpiresAt:   item.ExpiresAt,
+	}, ttl)
 	if err != nil {
 		s.logger.Warn("cache set url failed", zap.Error(err), zap.String("short_code", item.ShortCode))
 	}
@@ -334,4 +362,20 @@ func (s *ShortenerService) buildShortenResponse(shortCode string) *models.Shorte
 		ShortCode: shortCode,
 		ShortURL:  fmt.Sprintf("%s/%s", s.baseURL, shortCode),
 	}
+}
+
+func (s *ShortenerService) calculateExpiresAt(expiresInSeconds *int64) (*time.Time, error) {
+	if expiresInSeconds == nil {
+		return nil, nil
+	}
+	if *expiresInSeconds <= 0 {
+		return nil, fmt.Errorf("expires_in_seconds must be greater than zero")
+	}
+
+	expiresAt := time.Now().UTC().Add(time.Duration(*expiresInSeconds) * time.Second)
+	return &expiresAt, nil
+}
+
+func (s *ShortenerService) isExpired(expiresAt *time.Time) bool {
+	return expiresAt != nil && time.Now().UTC().After(expiresAt.UTC())
 }

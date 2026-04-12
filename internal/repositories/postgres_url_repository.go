@@ -23,12 +23,13 @@ func NewPostgresURLRepository(db *pgxpool.Pool) *PostgresURLRepository {
 
 func (r *PostgresURLRepository) CreateURL(ctx context.Context, url *models.URL) error {
 	const query = `
-		INSERT INTO urls (id, original_url, short_code)
-		VALUES ($1, $2, $3)
-		RETURNING created_at
+		INSERT INTO urls (id, original_url, short_code, expires_at)
+		VALUES ($1, $2, $3, $4)
+		RETURNING created_at, expires_at
 	`
 
-	err := r.db.QueryRow(ctx, query, url.ID, url.OriginalURL, url.ShortCode).Scan(&url.CreatedAt)
+	var expiresAt pgtype.Timestamptz
+	err := r.db.QueryRow(ctx, query, url.ID, url.OriginalURL, url.ShortCode, url.ExpiresAt).Scan(&url.CreatedAt, &expiresAt)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -49,22 +50,28 @@ func (r *PostgresURLRepository) CreateURL(ctx context.Context, url *models.URL) 
 	}
 
 	url.CreatedAt = url.CreatedAt.UTC()
+	if expiresAt.Valid {
+		t := expiresAt.Time.UTC()
+		url.ExpiresAt = &t
+	}
 	return nil
 }
 
 func (r *PostgresURLRepository) GetByCode(ctx context.Context, shortCode string) (*models.URL, error) {
 	const query = `
-		SELECT id, original_url, short_code, created_at
+		SELECT id, original_url, short_code, created_at, expires_at
 		FROM urls
 		WHERE short_code = $1
 	`
 
 	item := &models.URL{}
+	var expiresAt pgtype.Timestamptz
 	err := r.db.QueryRow(ctx, query, shortCode).Scan(
 		&item.ID,
 		&item.OriginalURL,
 		&item.ShortCode,
 		&item.CreatedAt,
+		&expiresAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -74,22 +81,28 @@ func (r *PostgresURLRepository) GetByCode(ctx context.Context, shortCode string)
 	}
 
 	item.CreatedAt = item.CreatedAt.UTC()
+	if expiresAt.Valid {
+		t := expiresAt.Time.UTC()
+		item.ExpiresAt = &t
+	}
 	return item, nil
 }
 
 func (r *PostgresURLRepository) GetByOriginalURL(ctx context.Context, originalURL string) (*models.URL, error) {
 	const query = `
-		SELECT id, original_url, short_code, created_at
+		SELECT id, original_url, short_code, created_at, expires_at
 		FROM urls
 		WHERE original_url = $1
 	`
 
 	item := &models.URL{}
+	var expiresAt pgtype.Timestamptz
 	err := r.db.QueryRow(ctx, query, originalURL).Scan(
 		&item.ID,
 		&item.OriginalURL,
 		&item.ShortCode,
 		&item.CreatedAt,
+		&expiresAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -99,6 +112,10 @@ func (r *PostgresURLRepository) GetByOriginalURL(ctx context.Context, originalUR
 	}
 
 	item.CreatedAt = item.CreatedAt.UTC()
+	if expiresAt.Valid {
+		t := expiresAt.Time.UTC()
+		item.ExpiresAt = &t
+	}
 	return item, nil
 }
 
@@ -109,6 +126,7 @@ func (r *PostgresURLRepository) GetStats(ctx context.Context, shortCode string) 
 			u.original_url,
 			u.short_code,
 			u.created_at,
+			u.expires_at,
 			COALESCE(COUNT(c.id), 0) AS total_clicks,
 			MAX(c.accessed_at) AS last_accessed_at
 		FROM urls u
@@ -118,6 +136,7 @@ func (r *PostgresURLRepository) GetStats(ctx context.Context, shortCode string) 
 	`
 
 	var stats models.URLStats
+	var expiresAt pgtype.Timestamptz
 	var lastAccess pgtype.Timestamptz
 
 	err := r.db.QueryRow(ctx, query, shortCode).Scan(
@@ -125,6 +144,7 @@ func (r *PostgresURLRepository) GetStats(ctx context.Context, shortCode string) 
 		&stats.URL.OriginalURL,
 		&stats.URL.ShortCode,
 		&stats.URL.CreatedAt,
+		&expiresAt,
 		&stats.TotalClicks,
 		&lastAccess,
 	)
@@ -136,6 +156,10 @@ func (r *PostgresURLRepository) GetStats(ctx context.Context, shortCode string) 
 	}
 
 	stats.URL.CreatedAt = stats.URL.CreatedAt.UTC()
+	if expiresAt.Valid {
+		t := expiresAt.Time.UTC()
+		stats.URL.ExpiresAt = &t
+	}
 	if lastAccess.Valid {
 		t := lastAccess.Time.UTC()
 		stats.LastAccessedAt = &t

@@ -53,13 +53,15 @@ func (h *Handler) Shorten(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.service.ShortenURL(r.Context(), req.URL, req.CustomCode)
+	resp, err := h.service.ShortenURL(r.Context(), req.URL, req.CustomCode, req.ExpiresInSeconds)
 	if err != nil {
 		switch {
 		case errors.Is(err, services.ErrInvalidURL):
 			writeError(w, http.StatusBadRequest, "invalid url")
 		case errors.Is(err, services.ErrInvalidCustomCode):
 			writeError(w, http.StatusBadRequest, "invalid custom_code")
+		case errors.Is(err, services.ErrInvalidExpiry):
+			writeError(w, http.StatusBadRequest, "invalid expires_in_seconds")
 		case errors.Is(err, services.ErrReservedShortCode):
 			writeError(w, http.StatusBadRequest, "custom_code is reserved")
 		case errors.Is(err, services.ErrCustomCodeConflict):
@@ -79,6 +81,8 @@ func (h *Handler) Redirect(w http.ResponseWriter, r *http.Request) {
 	targetURL, err := h.service.ResolveAndTrack(r.Context(), shortCode)
 	if err != nil {
 		switch {
+		case errors.Is(err, services.ErrShortCodeExpired):
+			writeError(w, http.StatusGone, "short code expired")
 		case errors.Is(err, services.ErrShortCodeNotFound):
 			writeError(w, http.StatusNotFound, "short code not found")
 		default:

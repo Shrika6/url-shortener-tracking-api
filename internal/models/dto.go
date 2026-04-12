@@ -1,8 +1,9 @@
 package models
 
 type ShortenRequest struct {
-	URL        string `json:"url"`
-	CustomCode string `json:"custom_code,omitempty"`
+	URL              string `json:"url"`
+	CustomCode       string `json:"custom_code,omitempty"`
+	ExpiresInSeconds *int64 `json:"expires_in_seconds,omitempty"`
 }
 
 type ShortenResponse struct {

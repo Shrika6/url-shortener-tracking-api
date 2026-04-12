@@ -96,6 +96,13 @@ curl -X POST http://localhost:8080/shorten \
   -d '{"url":"https://example.com","custom_code":"my-link"}'
 ```
 
+With expiry (seconds):
+```bash
+curl -X POST http://localhost:8080/shorten \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://example.com","expires_in_seconds":3600}'
+```
+
 Example response:
 ```json
 {
@@ -110,6 +117,7 @@ curl -i http://localhost:8080/abc123
 ```
 
 Returns `302 Found` with `Location: https://example.com`.
+If the link is expired, returns `410 Gone`.
 
 ### 3) Stats
 ```bash
