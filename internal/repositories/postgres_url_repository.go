@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -119,34 +120,37 @@ func (r *PostgresURLRepository) GetByOriginalURL(ctx context.Context, originalUR
 	return item, nil
 }
 
-func (r *PostgresURLRepository) GetStats(ctx context.Context, shortCode string) (*models.URLStats, error) {
-	const query = `
-		SELECT
-			u.id,
-			u.original_url,
-			u.short_code,
-			u.created_at,
-			u.expires_at,
-			COALESCE(COUNT(c.id), 0) AS total_clicks,
-			MAX(c.accessed_at) AS last_accessed_at
-		FROM urls u
-		LEFT JOIN clicks c ON c.url_id = u.id
-		WHERE u.short_code = $1
-		GROUP BY u.id
+func (r *PostgresURLRepository) GetStats(ctx context.Context, shortCode string, from, to *time.Time, limit, offset int) (*models.URLStats, error) {
+	const urlQuery = `
+		SELECT id, original_url, short_code, created_at, expires_at
+		FROM urls
+		WHERE short_code = $1
+	`
+	const countQuery = `
+		SELECT COALESCE(COUNT(id), 0), MAX(accessed_at)
+		FROM clicks
+		WHERE url_id = $1
+		  AND ($2::timestamptz IS NULL OR accessed_at >= $2)
+		  AND ($3::timestamptz IS NULL OR accessed_at <= $3)
+	`
+	const clicksQuery = `
+		SELECT accessed_at
+		FROM clicks
+		WHERE url_id = $1
+		  AND ($2::timestamptz IS NULL OR accessed_at >= $2)
+		  AND ($3::timestamptz IS NULL OR accessed_at <= $3)
+		ORDER BY accessed_at DESC
+		LIMIT $4 OFFSET $5
 	`
 
 	var stats models.URLStats
 	var expiresAt pgtype.Timestamptz
-	var lastAccess pgtype.Timestamptz
-
-	err := r.db.QueryRow(ctx, query, shortCode).Scan(
+	err := r.db.QueryRow(ctx, urlQuery, shortCode).Scan(
 		&stats.URL.ID,
 		&stats.URL.OriginalURL,
 		&stats.URL.ShortCode,
 		&stats.URL.CreatedAt,
 		&expiresAt,
-		&stats.TotalClicks,
-		&lastAccess,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -154,15 +158,38 @@ func (r *PostgresURLRepository) GetStats(ctx context.Context, shortCode string) 
 		}
 		return nil, err
 	}
-
 	stats.URL.CreatedAt = stats.URL.CreatedAt.UTC()
 	if expiresAt.Valid {
 		t := expiresAt.Time.UTC()
 		stats.URL.ExpiresAt = &t
 	}
+
+	var lastAccess pgtype.Timestamptz
+	err = r.db.QueryRow(ctx, countQuery, stats.URL.ID, from, to).Scan(&stats.TotalClicks, &lastAccess)
+	if err != nil {
+		return nil, err
+	}
 	if lastAccess.Valid {
 		t := lastAccess.Time.UTC()
 		stats.LastAccessedAt = &t
+	}
+
+	rows, err := r.db.Query(ctx, clicksQuery, stats.URL.ID, from, to, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	stats.Clicks = make([]time.Time, 0, limit)
+	for rows.Next() {
+		var ts time.Time
+		if err := rows.Scan(&ts); err != nil {
+			return nil, err
+		}
+		stats.Clicks = append(stats.Clicks, ts.UTC())
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
 	return &stats, nil

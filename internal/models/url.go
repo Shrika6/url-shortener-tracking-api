@@ -23,4 +23,5 @@ type URLStats struct {
 	URL            URL        `json:"url"`
 	TotalClicks    int64      `json:"total_clicks"`
 	LastAccessedAt *time.Time `json:"last_accessed_at,omitempty"`
+	Clicks         []time.Time `json:"clicks,omitempty"`
 }

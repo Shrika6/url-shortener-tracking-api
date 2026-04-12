@@ -18,7 +18,7 @@ import (
 type URLService interface {
 	ShortenURL(ctx context.Context, rawURL, customCode string, expiresInSeconds *int64) (*models.ShortenResponse, error)
 	ResolveAndTrack(ctx context.Context, shortCode string) (string, error)
-	GetStats(ctx context.Context, shortCode string) (*models.StatsResponse, error)
+	GetStats(ctx context.Context, shortCode string, query models.StatsQuery) (*models.StatsResponse, error)
 	RunClickSync(ctx context.Context)
 	FlushAllPendingClicks(ctx context.Context) error
 }
@@ -183,13 +183,20 @@ func (s *ShortenerService) ResolveAndTrack(ctx context.Context, shortCode string
 	return item.OriginalURL, nil
 }
 
-func (s *ShortenerService) GetStats(ctx context.Context, shortCode string) (*models.StatsResponse, error) {
+func (s *ShortenerService) GetStats(ctx context.Context, shortCode string, query models.StatsQuery) (*models.StatsResponse, error) {
 	shortCode = strings.TrimSpace(shortCode)
 	if shortCode == "" {
 		return nil, ErrShortCodeNotFound
 	}
+	if query.Page < 1 || query.Limit < 1 || query.Limit > 100 {
+		return nil, ErrInvalidStatsQuery
+	}
+	if query.From != nil && query.To != nil && query.From.After(*query.To) {
+		return nil, ErrInvalidStatsQuery
+	}
+	offset := (query.Page - 1) * query.Limit
 
-	stats, err := s.repo.GetStats(ctx, shortCode)
+	stats, err := s.repo.GetStats(ctx, shortCode, query.From, query.To, query.Limit, offset)
 	if err != nil {
 		if errors.Is(err, repositories.ErrURLNotFound) {
 			return nil, ErrShortCodeNotFound
@@ -197,32 +204,34 @@ func (s *ShortenerService) GetStats(ctx context.Context, shortCode string) (*mod
 		return nil, fmt.Errorf("get stats: %w", err)
 	}
 
-	pending, err := s.cache.GetPendingClicks(ctx, stats.URL.ID)
-	if err != nil {
-		s.logger.Warn("get pending clicks failed", zap.Error(err), zap.String("short_code", shortCode))
-	}
-
-	lastAccess := stats.LastAccessedAt
-	cachedLastAccess, err := s.cache.GetLastAccess(ctx, stats.URL.ID)
-	if err != nil {
-		s.logger.Warn("get cached last access failed", zap.Error(err), zap.String("short_code", shortCode))
-	} else if cachedLastAccess != nil {
-		if lastAccess == nil || cachedLastAccess.After(*lastAccess) {
-			lastAccess = cachedLastAccess
+	totalClicks := stats.TotalClicks
+	if query.From == nil && query.To == nil {
+		pending, err := s.cache.GetPendingClicks(ctx, stats.URL.ID)
+		if err != nil {
+			s.logger.Warn("get pending clicks failed", zap.Error(err), zap.String("short_code", shortCode))
+		} else {
+			totalClicks += pending
 		}
 	}
 
-	var lastAccessString *string
-	if lastAccess != nil {
-		formatted := lastAccess.UTC().Format(time.RFC3339)
-		lastAccessString = &formatted
+	clickItems := make([]models.ClickItem, 0, len(stats.Clicks))
+	for _, ts := range stats.Clicks {
+		clickItems = append(clickItems, models.ClickItem{
+			Timestamp: ts.UTC().Format(time.RFC3339),
+		})
+	}
+
+	totalPages := int((totalClicks + int64(query.Limit) - 1) / int64(query.Limit))
+	if totalPages == 0 {
+		totalPages = 1
 	}
 
 	return &models.StatsResponse{
-		URL:            stats.URL.OriginalURL,
-		TotalClicks:    stats.TotalClicks + pending,
-		CreatedAt:      stats.URL.CreatedAt.UTC().Format(time.RFC3339),
-		LastAccessedAt: lastAccessString,
+		URL:         stats.URL.OriginalURL,
+		TotalClicks: totalClicks,
+		Clicks:      clickItems,
+		Page:        query.Page,
+		TotalPages:  totalPages,
 	}, nil
 }
 

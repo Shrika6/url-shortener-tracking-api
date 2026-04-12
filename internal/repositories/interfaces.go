@@ -3,6 +3,7 @@ package repositories
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/shrika/url-shortener-tracking-api/internal/models"
 )
@@ -17,6 +18,6 @@ type URLRepository interface {
 	CreateURL(ctx context.Context, url *models.URL) error
 	GetByCode(ctx context.Context, shortCode string) (*models.URL, error)
 	GetByOriginalURL(ctx context.Context, originalURL string) (*models.URL, error)
-	GetStats(ctx context.Context, shortCode string) (*models.URLStats, error)
+	GetStats(ctx context.Context, shortCode string, from, to *time.Time, limit, offset int) (*models.URLStats, error)
 	BulkInsertClicks(ctx context.Context, events []models.ClickEvent) error
 }

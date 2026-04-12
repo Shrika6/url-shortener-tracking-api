@@ -1,5 +1,7 @@
 package models
 
+import "time"
+
 type ShortenRequest struct {
 	URL              string `json:"url"`
 	CustomCode       string `json:"custom_code,omitempty"`
@@ -12,10 +14,22 @@ type ShortenResponse struct {
 }
 
 type StatsResponse struct {
-	URL            string  `json:"url"`
-	TotalClicks    int64   `json:"total_clicks"`
-	CreatedAt      string  `json:"created_at"`
-	LastAccessedAt *string `json:"last_accessed_at,omitempty"`
+	URL         string      `json:"url"`
+	TotalClicks int64       `json:"total_clicks"`
+	Clicks      []ClickItem `json:"clicks"`
+	Page        int         `json:"page"`
+	TotalPages  int         `json:"total_pages"`
+}
+
+type ClickItem struct {
+	Timestamp string `json:"timestamp"`
+}
+
+type StatsQuery struct {
+	Page  int
+	Limit int
+	From  *time.Time
+	To    *time.Time
 }
 
 type ErrorResponse struct {

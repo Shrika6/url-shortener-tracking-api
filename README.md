@@ -129,9 +129,19 @@ Example response:
 {
   "url": "https://example.com",
   "total_clicks": 123,
-  "created_at": "2026-04-09T10:00:00Z",
-  "last_accessed_at": "2026-04-09T10:15:10Z"
+  "clicks": [
+    {
+      "timestamp": "2026-04-09T10:15:10Z"
+    }
+  ],
+  "page": 1,
+  "total_pages": 5
 }
+```
+
+With pagination and time filters:
+```bash
+curl "http://localhost:8080/stats/abc123?page=1&limit=10&from=2026-04-09T00:00:00Z&to=2026-04-10T00:00:00Z"
 ```
 
 ### 4) Health

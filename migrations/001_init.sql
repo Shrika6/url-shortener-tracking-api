@@ -16,3 +16,4 @@ CREATE TABLE IF NOT EXISTS clicks (
 
 CREATE INDEX IF NOT EXISTS idx_clicks_url_id ON clicks(url_id);
 CREATE INDEX IF NOT EXISTS idx_clicks_accessed_at ON clicks(accessed_at);
+CREATE INDEX IF NOT EXISTS idx_clicks_url_id_accessed_at ON clicks(url_id, accessed_at);

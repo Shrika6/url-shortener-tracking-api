@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
@@ -97,9 +100,17 @@ func (h *Handler) Redirect(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
 	shortCode := chi.URLParam(r, "short_code")
-	resp, err := h.service.GetStats(r.Context(), shortCode)
+	query, err := parseStatsQuery(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid stats query params")
+		return
+	}
+
+	resp, err := h.service.GetStats(r.Context(), shortCode, query)
 	if err != nil {
 		switch {
+		case errors.Is(err, services.ErrInvalidStatsQuery):
+			writeError(w, http.StatusBadRequest, "invalid stats query params")
 		case errors.Is(err, services.ErrShortCodeNotFound):
 			writeError(w, http.StatusNotFound, "short code not found")
 		default:
@@ -120,4 +131,56 @@ func writeJSON(w http.ResponseWriter, status int, payload interface{}) {
 
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, models.ErrorResponse{Error: message})
+}
+
+func parseStatsQuery(r *http.Request) (models.StatsQuery, error) {
+	q := r.URL.Query()
+	page := 1
+	limit := 10
+
+	if rawPage := strings.TrimSpace(q.Get("page")); rawPage != "" {
+		parsed, err := strconv.Atoi(rawPage)
+		if err != nil || parsed < 1 {
+			return models.StatsQuery{}, errors.New("invalid page")
+		}
+		page = parsed
+	}
+	if rawLimit := strings.TrimSpace(q.Get("limit")); rawLimit != "" {
+		parsed, err := strconv.Atoi(rawLimit)
+		if err != nil || parsed < 1 || parsed > 100 {
+			return models.StatsQuery{}, errors.New("invalid limit")
+		}
+		limit = parsed
+	}
+
+	var fromPtr *time.Time
+	if rawFrom := strings.TrimSpace(q.Get("from")); rawFrom != "" {
+		from, err := time.Parse(time.RFC3339, rawFrom)
+		if err != nil {
+			return models.StatsQuery{}, errors.New("invalid from")
+		}
+		from = from.UTC()
+		fromPtr = &from
+	}
+
+	var toPtr *time.Time
+	if rawTo := strings.TrimSpace(q.Get("to")); rawTo != "" {
+		to, err := time.Parse(time.RFC3339, rawTo)
+		if err != nil {
+			return models.StatsQuery{}, errors.New("invalid to")
+		}
+		to = to.UTC()
+		toPtr = &to
+	}
+
+	if fromPtr != nil && toPtr != nil && fromPtr.After(*toPtr) {
+		return models.StatsQuery{}, errors.New("from after to")
+	}
+
+	return models.StatsQuery{
+		Page:  page,
+		Limit: limit,
+		From:  fromPtr,
+		To:    toPtr,
+	}, nil
 }
