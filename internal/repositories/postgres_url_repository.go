@@ -11,18 +11,23 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	appmetrics "github.com/shrika/url-shortener-tracking-api/internal/metrics"
 	"github.com/shrika/url-shortener-tracking-api/internal/models"
 )
 
 type PostgresURLRepository struct {
-	db *pgxpool.Pool
+	db      *pgxpool.Pool
+	metrics *appmetrics.Metrics
 }
 
-func NewPostgresURLRepository(db *pgxpool.Pool) *PostgresURLRepository {
-	return &PostgresURLRepository{db: db}
+func NewPostgresURLRepository(db *pgxpool.Pool, metrics *appmetrics.Metrics) *PostgresURLRepository {
+	return &PostgresURLRepository{db: db, metrics: metrics}
 }
 
 func (r *PostgresURLRepository) CreateURL(ctx context.Context, url *models.URL) error {
+	start := time.Now()
+	defer r.metrics.ObserveDBQuery("create_url", time.Since(start))
+
 	const query = `
 		INSERT INTO urls (id, original_url, short_code, expires_at)
 		VALUES ($1, $2, $3, $4)
@@ -59,6 +64,9 @@ func (r *PostgresURLRepository) CreateURL(ctx context.Context, url *models.URL) 
 }
 
 func (r *PostgresURLRepository) GetByCode(ctx context.Context, shortCode string) (*models.URL, error) {
+	start := time.Now()
+	defer r.metrics.ObserveDBQuery("get_by_code", time.Since(start))
+
 	const query = `
 		SELECT id, original_url, short_code, created_at, expires_at
 		FROM urls
@@ -90,6 +98,9 @@ func (r *PostgresURLRepository) GetByCode(ctx context.Context, shortCode string)
 }
 
 func (r *PostgresURLRepository) GetByOriginalURL(ctx context.Context, originalURL string) (*models.URL, error) {
+	start := time.Now()
+	defer r.metrics.ObserveDBQuery("get_by_original_url", time.Since(start))
+
 	const query = `
 		SELECT id, original_url, short_code, created_at, expires_at
 		FROM urls
@@ -121,6 +132,9 @@ func (r *PostgresURLRepository) GetByOriginalURL(ctx context.Context, originalUR
 }
 
 func (r *PostgresURLRepository) GetStats(ctx context.Context, shortCode string, from, to *time.Time, limit, offset int) (*models.URLStats, error) {
+	start := time.Now()
+	defer r.metrics.ObserveDBQuery("get_stats", time.Since(start))
+
 	const urlQuery = `
 		SELECT id, original_url, short_code, created_at, expires_at
 		FROM urls
@@ -196,6 +210,9 @@ func (r *PostgresURLRepository) GetStats(ctx context.Context, shortCode string, 
 }
 
 func (r *PostgresURLRepository) BulkInsertClicks(ctx context.Context, events []models.ClickEvent) error {
+	start := time.Now()
+	defer r.metrics.ObserveDBQuery("bulk_insert_clicks", time.Since(start))
+
 	if len(events) == 0 {
 		return nil
 	}

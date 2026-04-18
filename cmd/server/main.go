@@ -15,6 +15,7 @@ import (
 	"github.com/shrika/url-shortener-tracking-api/internal/handlers"
 	"github.com/shrika/url-shortener-tracking-api/internal/logger"
 	"github.com/shrika/url-shortener-tracking-api/internal/middleware"
+	appmetrics "github.com/shrika/url-shortener-tracking-api/internal/metrics"
 	"github.com/shrika/url-shortener-tracking-api/internal/repositories"
 	"github.com/shrika/url-shortener-tracking-api/internal/services"
 	"go.uber.org/zap"
@@ -56,8 +57,9 @@ func main() {
 		log.Fatal("failed to ping redis", zap.Error(err))
 	}
 
-	repo := repositories.NewPostgresURLRepository(dbPool)
-	redisCache := cache.NewRedisCache(redisClient)
+	metrics := appmetrics.New()
+	repo := repositories.NewPostgresURLRepository(dbPool, metrics)
+	redisCache := cache.NewRedisCache(redisClient, metrics)
 	service := services.NewShortenerService(
 		repo,
 		redisCache,
@@ -70,7 +72,7 @@ func main() {
 	)
 
 	rateLimiter := middleware.NewRateLimiter(redisClient, cfg.RateLimitRequests, cfg.RateLimitWindow, log)
-	h := handlers.New(service, log)
+	h := handlers.New(service, log, metrics)
 
 	server := &http.Server{
 		Addr:         ":" + cfg.Port,

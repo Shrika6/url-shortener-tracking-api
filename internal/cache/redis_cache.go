@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	appmetrics "github.com/shrika/url-shortener-tracking-api/internal/metrics"
 	"github.com/shrika/url-shortener-tracking-api/internal/models"
 )
 
@@ -31,7 +32,8 @@ type URLCache interface {
 }
 
 type RedisCache struct {
-	client *redis.Client
+	client  *redis.Client
+	metrics *appmetrics.Metrics
 }
 
 type clickEventPayload struct {
@@ -47,14 +49,18 @@ func NewRedisClient(redisURL string) (*redis.Client, error) {
 	return redis.NewClient(opts), nil
 }
 
-func NewRedisCache(client *redis.Client) *RedisCache {
-	return &RedisCache{client: client}
+func NewRedisCache(client *redis.Client, metrics *appmetrics.Metrics) *RedisCache {
+	return &RedisCache{client: client, metrics: metrics}
 }
 
 func (c *RedisCache) GetURL(ctx context.Context, shortCode string) (*models.CachedURL, error) {
+	start := time.Now()
+	defer c.metrics.ObserveRedisOperation("get_url", time.Since(start))
+
 	val, err := c.client.Get(ctx, urlCacheKey(shortCode)).Result()
 	if err != nil {
 		if err == redis.Nil {
+			c.metrics.IncCacheMiss()
 			return nil, nil
 		}
 		return nil, err
@@ -64,11 +70,15 @@ func (c *RedisCache) GetURL(ctx context.Context, shortCode string) (*models.Cach
 	if err := json.Unmarshal([]byte(val), &item); err != nil {
 		return nil, err
 	}
+	c.metrics.IncCacheHit()
 
 	return &item, nil
 }
 
 func (c *RedisCache) SetURL(ctx context.Context, shortCode string, value models.CachedURL, ttl time.Duration) error {
+	start := time.Now()
+	defer c.metrics.ObserveRedisOperation("set_url", time.Since(start))
+
 	payload, err := json.Marshal(value)
 	if err != nil {
 		return err
@@ -78,6 +88,9 @@ func (c *RedisCache) SetURL(ctx context.Context, shortCode string, value models.
 }
 
 func (c *RedisCache) TrackClick(ctx context.Context, urlID uuid.UUID, accessedAt time.Time) error {
+	start := time.Now()
+	defer c.metrics.ObserveRedisOperation("track_click", time.Since(start))
+
 	accessedAt = accessedAt.UTC()
 	payload, err := json.Marshal(clickEventPayload{
 		URLID:      urlID.String(),
@@ -96,6 +109,9 @@ func (c *RedisCache) TrackClick(ctx context.Context, urlID uuid.UUID, accessedAt
 }
 
 func (c *RedisCache) DequeueClickEvents(ctx context.Context, batchSize int64) ([]models.ClickEvent, error) {
+	start := time.Now()
+	defer c.metrics.ObserveRedisOperation("dequeue_click_events", time.Since(start))
+
 	if batchSize <= 0 {
 		return nil, nil
 	}
@@ -133,6 +149,9 @@ func (c *RedisCache) DequeueClickEvents(ctx context.Context, batchSize int64) ([
 }
 
 func (c *RedisCache) RequeueClickEvents(ctx context.Context, events []models.ClickEvent) error {
+	start := time.Now()
+	defer c.metrics.ObserveRedisOperation("requeue_click_events", time.Since(start))
+
 	if len(events) == 0 {
 		return nil
 	}
@@ -153,6 +172,9 @@ func (c *RedisCache) RequeueClickEvents(ctx context.Context, events []models.Cli
 }
 
 func (c *RedisCache) GetPendingClicks(ctx context.Context, urlID uuid.UUID) (int64, error) {
+	start := time.Now()
+	defer c.metrics.ObserveRedisOperation("get_pending_clicks", time.Since(start))
+
 	count, err := c.client.Get(ctx, pendingClicksKey(urlID)).Int64()
 	if err != nil {
 		if err == redis.Nil {
@@ -164,6 +186,9 @@ func (c *RedisCache) GetPendingClicks(ctx context.Context, urlID uuid.UUID) (int
 }
 
 func (c *RedisCache) DecrementPendingClicks(ctx context.Context, urlID uuid.UUID, amount int64) error {
+	start := time.Now()
+	defer c.metrics.ObserveRedisOperation("decrement_pending_clicks", time.Since(start))
+
 	if amount <= 0 {
 		return nil
 	}
@@ -184,6 +209,9 @@ func (c *RedisCache) DecrementPendingClicks(ctx context.Context, urlID uuid.UUID
 }
 
 func (c *RedisCache) GetLastAccess(ctx context.Context, urlID uuid.UUID) (*time.Time, error) {
+	start := time.Now()
+	defer c.metrics.ObserveRedisOperation("get_last_access", time.Since(start))
+
 	val, err := c.client.Get(ctx, lastAccessKey(urlID)).Result()
 	if err != nil {
 		if err == redis.Nil {

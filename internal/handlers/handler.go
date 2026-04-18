@@ -10,7 +10,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/shrika/url-shortener-tracking-api/internal/middleware"
+	appmetrics "github.com/shrika/url-shortener-tracking-api/internal/metrics"
 	"github.com/shrika/url-shortener-tracking-api/internal/models"
 	"github.com/shrika/url-shortener-tracking-api/internal/services"
 	"go.uber.org/zap"
@@ -19,10 +21,11 @@ import (
 type Handler struct {
 	service services.URLService
 	logger  *zap.Logger
+	metrics *appmetrics.Metrics
 }
 
-func New(service services.URLService, logger *zap.Logger) *Handler {
-	return &Handler{service: service, logger: logger}
+func New(service services.URLService, logger *zap.Logger, metrics *appmetrics.Metrics) *Handler {
+	return &Handler{service: service, logger: logger, metrics: metrics}
 }
 
 func (h *Handler) Router(rateLimiter *middleware.RateLimiter) http.Handler {
@@ -31,8 +34,10 @@ func (h *Handler) Router(rateLimiter *middleware.RateLimiter) http.Handler {
 	r.Use(chimiddleware.RealIP)
 	r.Use(chimiddleware.Recoverer)
 	r.Use(middleware.Logging(h.logger))
+	r.Use(middleware.HTTPMetrics(h.metrics))
 
 	r.Get("/health", h.Health)
+	r.Handle("/metrics", promhttp.Handler())
 	r.Get("/stats/{short_code}", h.Stats)
 	r.With(rateLimiter.Handler).Post("/shorten", h.Shorten)
 	r.With(rateLimiter.Handler).Get("/{short_code}", h.Redirect)
@@ -79,6 +84,10 @@ func (h *Handler) Shorten(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Redirect(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	h.metrics.IncRedirectRequests()
+	defer h.metrics.ObserveRedirectLatency(time.Since(start))
+
 	shortCode := chi.URLParam(r, "short_code")
 	targetURL, err := h.service.ResolveAndTrack(r.Context(), shortCode)
 	if err != nil {

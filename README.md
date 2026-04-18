@@ -34,6 +34,7 @@ url-shortener-tracking-api/
 - `GET /{short_code}` redirect with click tracking
 - `GET /stats/{short_code}` analytics
 - `GET /health` service health check
+- `GET /metrics` Prometheus metrics endpoint
 - Duplicate URL dedupe support (same URL returns existing short code)
 - Redis cache for `short_code -> original_url`
 - Redis-backed click queue + periodic write-behind flush to Postgres
@@ -149,12 +150,41 @@ curl "http://localhost:8080/stats/abc123?page=1&limit=10&from=2026-04-09T00:00:0
 curl http://localhost:8080/health
 ```
 
+### 5) Metrics
+```bash
+curl http://localhost:8080/metrics
+```
+
 ## Running Tests
 ```bash
 go test ./...
 ```
 
 Includes basic service-layer unit tests under `internal/services`.
+
+## Load Testing (k6)
+Two scripts are provided in `loadtest/`:
+- `redirect_high_qps.js`: high-QPS redirect traffic
+- `mixed_workload.js`: 80% redirect, 20% shorten
+
+Install k6, then run:
+```bash
+k6 run loadtest/redirect_high_qps.js
+k6 run loadtest/mixed_workload.js
+```
+
+Optional env overrides:
+```bash
+BASE_URL=http://localhost:8080 DURATION=2m REDIRECT_RPS=800 k6 run loadtest/redirect_high_qps.js
+BASE_URL=http://localhost:8080 DURATION=2m MIXED_RPS=300 k6 run loadtest/mixed_workload.js
+```
+
+Note on rate limiting:
+- The API has per-IP rate limiting on `POST /shorten` and `GET /{short_code}`.
+- The k6 scripts default to `SPOOF_IPS=true` and send randomized `X-Forwarded-For` values to avoid all traffic being treated as a single IP.
+- To test strict single-IP behavior, set `SPOOF_IPS=false`.
+
+The k6 summary includes requests/sec and latency percentiles including p95 and p99.
 
 ## Architecture Notes
 - Handlers only deal with HTTP concerns (request parsing, status codes, responses).
